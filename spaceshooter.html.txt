@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Invaders: Alien Warfare</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: 'Arial', sans-serif;
+        }
+
+        #gameCanvas {
+            display: block;
+            background: linear-gradient(to bottom, #000428, #004e92);
+            margin: 0 auto;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            z-index: 10;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+
+        #bossBar {
+            position: absolute;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 400px;
+            display: none;
+            z-index: 10;
+        }
+
+        #bossName {
+            color: #ff0000;
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 5px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+
+        #bossHealthBar {
+            width: 100%;
+            height: 30px;
+            background: rgba(50, 50, 50, 0.8);
+            border: 3px solid #ff0000;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        #bossHealthFill {
+            height: 100%;
+            background: linear-gradient(to right, #ff0000, #ff6600);
+            transition: width 0.3s;
+        }
+
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: white;
+            font-size: 48px;
+            display: none;
+            z-index: 20;
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.9);
+        }
+
+        #gameOver button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 24px;
+            background: #00ff00;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            color: black;
+            font-weight: bold;
+        }
+
+        #gameOver button:hover {
+            background: #00cc00;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="ui">
+        <div>Lives: <span id="lives">3</span></div>
+        <div>Coins: <span id="coins">0</span></div>
+        <div>Wave: <span id="wave">1</span></div>
+    </div>
+
+    <div id="bossBar">
+        <div id="bossName"></div>
+        <div id="bossHealthBar">
+            <div id="bossHealthFill" style="width: 100%;"></div>
+        </div>
+    </div>
+
+    <div id="gameOver">
+        <div id="gameOverText"></div>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 800;
+        canvas.height = 600;
+
+        // Game variables
+        let gameState = {
+            lives: 3,
+            coins: 0,
+            wave: 1,
+            gameActive: true,
+            frozen: false,
+            freezeTimer: 0
+        };
+
+        // Player
+        const player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 80,
+            width: 40,
+            height: 40,
+            speed: 5,
+            color: '#00ff00'
+        };
+
+        // Controls
+        const keys = {};
+        window.addEventListener('keydown', (e) => keys[e.key] = true);
+        window.addEventListener('keyup', (e) => keys[e.key] = false);
+
+        // Arrays
+        let lasers = [];
+        let aliens = [];
+        let alienLasers = [];
+        let particles = [];
+        let stars = [];
+        let currentBoss = null;
+
+        // Create stars background
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2,
+                speed: Math.random() * 0.5 + 0.1
+            });
+        }
+
+        // Laser class
+        class Laser {
+            constructor(x, y, isPlayerLaser = true) {
+                this.x = x;
+                this.y = y;
+                this.width = 4;
+                this.height = 15;
+                this.speed = isPlayerLaser ? -7 : 3;
+                this.isPlayerLaser = isPlayerLaser;
+                this.color = isPlayerLaser ? '#00ffff' : '#ff0000';
+            }
+
+            update() {
+                this.y += this.speed;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // Alien class
+        class Alien {
+            constructor(x, y, type = 'normal') {
+                this.x = x;
+                this.y = y;
+                this.width = 40;
+                this.height = 40;
+                this.speed = 1;
+                this.type = type;
+                this.health = 1;
+                this.shootTimer = Math.random() * 100;
+            }
+
+            update() {
+                this.y += this.speed;
+                this.shootTimer++;
+                if (this.shootTimer > 150 && Math.random() < 0.02) {
+                    alienLasers.push(new Laser(this.x + this.width / 2, this.y + this.height, false));
+                    this.shootTimer = 0;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = '#ff00ff';
+                ctx.beginPath();
+                ctx.arc(this.x + this.width / 2, this.y + this.height / 2, this.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(this.x + 10, this.y + 10, 8, 8);
+                ctx.fillRect(this.x + 22, this.y + 10, 8, 8);
+            }
+        }
+
+        // Boss class
+        class Boss {
+            constructor(name, wave) {
+                this.name = name;
+                this.wave = wave;
+                this.x = canvas.width / 2 - 50;
+                this.y = 50;
+                this.width = 100;
+                this.height = 80;
+                this.maxHealth = this.getMaxHealth();
+                this.health = this.maxHealth;
+                this.speed = 2;
+                this.direction = 1;
+                this.shootTimer = 0;
+                this.specialTimer = 0;
+                this.spawnTimer = 0;
+            }
+
+            getMaxHealth() {
+                switch(this.wave) {
+                    case 10: return 100;
+                    case 25: return 200;
+                    case 50: return 300;
+                    case 100: return 500;
+                    default: return 100;
+                }
+            }
+
+            update() {
+                this.x += this.speed * this.direction;
+                if (this.x <= 0 || this.x + this.width >= canvas.width) {
+                    this.direction *= -1;
+                }
+
+                this.shootTimer++;
+                this.specialTimer++;
+                this.spawnTimer++;
+
+                // Regular shooting
+                if (this.shootTimer > 60) {
+                    this.shoot();
+                    this.shootTimer = 0;
+                }
+
+                // Special abilities
+                if (this.specialTimer > 300) {
+                    this.useSpecialAbility();
+                    this.specialTimer = 0;
+                }
+
+                // Spawn minions (for wave 50 and 100 bosses)
+                if ((this.wave === 50 || this.wave === 100) && this.spawnTimer > 200 && aliens.length < 5) {
+                    this.spawnMinion();
+                    this.spawnTimer = 0;
+                }
+            }
+
+            shoot() {
+                if (this.wave === 25 || this.wave === 100) {
+                    // Triple shot
+                    alienLasers.push(new Laser(this.x + this.width / 2 - 20, this.y + this.height, false));
+                    alienLasers.push(new Laser(this.x + this.width / 2, this.y + this.height, false));
+                    alienLasers.push(new Laser(this.x + this.width / 2 + 20, this.y + this.height, false));
+                } else {
+                    alienLasers.push(new Laser(this.x + this.width / 2, this.y + this.height, false));
+                }
+            }
+
+            useSpecialAbility() {
+                switch(this.wave) {
+                    case 10: // Alien 69 - Freeze
+                        gameState.frozen = true;
+                        gameState.freezeTimer = 120;
+                        break;
+                    case 25: // Commander Alien - Power blast
+                        for (let i = 0; i < 8; i++) {
+                            alienLasers.push(new Laser(this.x + this.width / 2, this.y + this.height, false));
+                        }
+                        break;
+                    case 50: // Main Commander - Shield
+                        this.health = Math.min(this.health + 50, this.maxHealth);
+                        break;
+                    case 100: // Father of All Aliens - Meteor shower
+                        for (let i = 0; i < 15; i++) {
+                            alienLasers.push(new Laser(Math.random() * canvas.width, 0, false));
+                        }
+                        break;
+                }
+            }
+
+            spawnMinion() {
+                aliens.push(new Alien(Math.random() * (canvas.width - 40), 100));
+            }
+
+            draw() {
+                // Boss body
+                ctx.fillStyle = this.getBossColor();
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // Boss eyes
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(this.x + 20, this.y + 20, 15, 15);
+                ctx.fillRect(this.x + 65, this.y + 20, 15, 15);
+                
+                // Boss mouth
+                ctx.fillStyle = '#000';
+                ctx.fillRect(this.x + 30, this.y + 55, 40, 10);
+            }
+
+            getBossColor() {
+                switch(this.wave) {
+                    case 10: return '#0088ff';
+                    case 25: return '#ff8800';
+                    case 50: return '#ff0088';
+                    case 100: return '#8800ff';
+                    default: return '#ff00ff';
+                }
+            }
+        }
+
+        // Spawn aliens for wave
+        function spawnWave() {
+            aliens = [];
+            currentBoss = null;
+            document.getElementById('bossBar').style.display = 'none';
+
+            if (gameState.wave === 10) {
+                currentBoss = new Boss('ALIEN 69', 10);
+                showBossBar();
+            } else if (gameState.wave === 25) {
+                currentBoss = new Boss('COMMANDER ALIEN', 25);
+                showBossBar();
+            } else if (gameState.wave === 50) {
+                currentBoss = new Boss('THE MAIN COMMANDER', 50);
+                showBossBar();
+            } else if (gameState.wave === 100) {
+                currentBoss = new Boss('THE FATHER OF ALL ALIENS', 100);
+                showBossBar();
+            } else {
+                const alienCount = Math.min(5 + gameState.wave, 15);
+                for (let i = 0; i < alienCount; i++) {
+                    aliens.push(new Alien(
+                        Math.random() * (canvas.width - 40),
+                        Math.random() * 100 - 100
+                    ));
+                }
+            }
+        }
+
+        function showBossBar() {
+            document.getElementById('bossBar').style.display = 'block';
+            document.getElementById('bossName').textContent = currentBoss.name;
+        }
+
+        function updateBossBar() {
+            if (currentBoss) {
+                const percentage = (currentBoss.health / currentBoss.maxHealth) * 100;
+                document.getElementById('bossHealthFill').style.width = percentage + '%';
+            }
+        }
+
+        // Create particles
+        function createExplosion(x, y) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    life: 30,
+                    color: `rgb(${Math.random() * 255}, ${Math.random() * 255}, 255)`
+                });
+            }
+        }
+
+        // Update game
+        function update() {
+            if (!gameState.gameActive) return;
+
+            // Update freeze timer
+            if (gameState.frozen) {
+                gameState.freezeTimer--;
+                if (gameState.freezeTimer <= 0) {
+                    gameState.frozen = false;
+                }
+            }
+
+            // Move player
+            if (!gameState.frozen) {
+                if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+                if (keys['ArrowRight'] && player.x < canvas.width - player.width) player.x += player.speed;
+                if (keys['ArrowUp'] && player.y > canvas.height / 2) player.y -= player.speed;
+                if (keys['ArrowDown'] && player.y < canvas.height - player.height) player.y += player.speed;
+            }
+
+            // Auto-shoot lasers
+            if (Math.random() < 0.1) {
+                lasers.push(new Laser(player.x + player.width / 2 - 2, player.y));
+            }
+
+            // Update lasers
+            lasers = lasers.filter(laser => {
+                laser.update();
+                return laser.y > -20;
+            });
+
+            alienLasers = alienLasers.filter(laser => {
+                laser.update();
+                return laser.y < canvas.height + 20;
+            });
+
+            // Update aliens
+            if (currentBoss) {
+                currentBoss.update();
+                updateBossBar();
+
+                // Check laser collision with boss
+                lasers.forEach((laser, lIndex) => {
+                    if (laser.x < currentBoss.x + currentBoss.width &&
+                        laser.x + laser.width > currentBoss.x &&
+                        laser.y < currentBoss.y + currentBoss.height &&
+                        laser.y + laser.height > currentBoss.y) {
+                        lasers.splice(lIndex, 1);
+                        currentBoss.health -= 1;
+                        createExplosion(laser.x, laser.y);
+                        
+                        if (currentBoss.health <= 0) {
+                            createExplosion(currentBoss.x + currentBoss.width / 2, currentBoss.y + currentBoss.height / 2);
+                            gameState.coins += 50;
+                            currentBoss = null;
+                            document.getElementById('bossBar').style.display = 'none';
+                            
+                            if (gameState.wave === 100) {
+                                gameComplete();
+                            } else {
+                                gameState.wave++;
+                                spawnWave();
+                            }
+                        }
+                    }
+                });
+            } else {
+                aliens.forEach((alien, aIndex) => {
+                    alien.update();
+                    
+                    // Check if alien reached bottom
+                    if (alien.y > canvas.height) {
+                        aliens.splice(aIndex, 1);
+                    }
+
+                    // Check laser collision
+                    lasers.forEach((laser, lIndex) => {
+                        if (laser.x < alien.x + alien.width &&
+                            laser.x + laser.width > alien.x &&
+                            laser.y < alien.y + alien.height &&
+                            laser.y + laser.height > alien.y) {
+                            lasers.splice(lIndex, 1);
+                            aliens.splice(aIndex, 1);
+                            gameState.coins += 10;
+                            createExplosion(alien.x + alien.width / 2, alien.y + alien.height / 2);
+                        }
+                    });
+                });
+
+                // Check if wave is complete
+                if (aliens.length === 0) {
+                    gameState.wave++;
+                    spawnWave();
+                }
+            }
+
+            // Check player collision with alien lasers
+            alienLasers.forEach((laser, index) => {
+                if (laser.x < player.x + player.width &&
+                    laser.x + laser.width > player.x &&
+                    laser.y < player.y + player.height &&
+                    laser.y + laser.height > player.y) {
+                    alienLasers.splice(index, 1);
+                    gameState.lives--;
+                    createExplosion(player.x + player.width / 2, player.y + player.height / 2);
+                    
+                    if (gameState.lives <= 0) {
+                        gameOver();
+                    }
+                }
+            });
+
+            // Update particles
+            particles = particles.filter(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                return p.life > 0;
+            });
+
+            // Update stars
+            stars.forEach(star => {
+                star.y += star.speed;
+                if (star.y > canvas.height) {
+                    star.y = 0;
+                    star.x = Math.random() * canvas.width;
+                }
+            });
+
+            // Update UI
+            document.getElementById('lives').textContent = gameState.lives;
+            document.getElementById('coins').textContent = gameState.coins;
+            document.getElementById('wave').textContent = gameState.wave;
+        }
+
+        // Draw game
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw stars
+            stars.forEach(star => {
+                ctx.fillStyle = 'white';
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+
+            // Draw player
+            ctx.fillStyle = gameState.frozen ? '#0088ff' : player.color;
+            ctx.beginPath();
+            ctx.moveTo(player.x + player.width / 2, player.y);
+            ctx.lineTo(player.x, player.y + player.height);
+            ctx.lineTo(player.x + player.width, player.y + player.height);
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw lasers
+            lasers.forEach(laser => laser.draw());
+            alienLasers.forEach(laser => laser.draw());
+
+            // Draw aliens
+            aliens.forEach(alien => alien.draw());
+
+            // Draw boss
+            if (currentBoss) {
+                currentBoss.draw();
+            }
+
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 3, 3);
+            });
+
+            // Draw freeze effect
+            if (gameState.frozen) {
+                ctx.fillStyle = 'rgba(0, 136, 255, 0.2)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#0088ff';
+                ctx.font = '30px Arial';
+                ctx.fillText('FROZEN!', canvas.width / 2 - 60, canvas.height / 2);
+            }
+        }
+
+        function gameOver() {
+            gameState.gameActive = false;
+            document.getElementById('gameOverText').textContent = 'GAME OVER!';
+            document.getElementById('gameOver').style.display = 'block';
+        }
+
+        function gameComplete() {
+            gameState.gameActive = false;
+            document.getElementById('gameOverText').innerHTML = 'YOU COMPLETED THE GAME!<br>You defeated The Father of All Aliens!';
+            document.getElementById('gameOver').style.display = 'block';
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        spawnWave();
+        gameLoop();
+    </script>
+</body>
+</html>
